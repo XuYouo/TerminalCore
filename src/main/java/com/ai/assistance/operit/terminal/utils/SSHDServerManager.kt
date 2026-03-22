@@ -10,10 +10,8 @@ import org.apache.sshd.server.auth.password.PasswordAuthenticator
 import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider
 import org.apache.sshd.sftp.server.SftpSubsystemFactory
 import org.apache.sshd.common.file.virtualfs.VirtualFileSystemFactory
-import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.io.File
 import java.nio.file.Paths
-import java.security.Security
 
 /**
  * SSHD 服务器管理器
@@ -47,10 +45,9 @@ class SSHDServerManager private constructor(private val context: Context) {
             System.setProperty("user.home", context.filesDir.absolutePath)
             System.setProperty("user.dir", context.filesDir.absolutePath)
             
-            // Register BouncyCastle provider to avoid JMX issues on Android
-            // see: https://issues.apache.org/jira/browse/SSHD-1236
-            Security.removeProvider("BC")
-            Security.addProvider(BouncyCastleProvider())
+            // Do not modify the system BC provider on Android.
+            // Replacing/removing it can break platform TLS initialization
+            // (e.g., KeyStore type BKS lookup used by system SSL stack).
         }
     }
     
@@ -164,4 +161,3 @@ class SSHDServerManager private constructor(private val context: Context) {
         }
     }
 }
-
