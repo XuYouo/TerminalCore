@@ -89,6 +89,8 @@ class TerminalManager private constructor(
     // 单例的 TerminalProvider
     private var terminalProvider: TerminalProvider? = null
     private val providerMutex = Mutex()
+    @Volatile
+    private var preferredTerminalTypeOverride: TerminalType? = null
 
     // 状态和事件流
     private val _commandExecutionEvents = MutableSharedFlow<CommandExecutionEvent>()
@@ -157,13 +159,18 @@ class TerminalManager private constructor(
     suspend fun createNewSession(
         title: String? = null
     ): TerminalSessionData {
-        // 自动检测终端类型
-        val terminalType = if (sshConfigManager.getConfig() != null && sshConfigManager.isEnabled()) {
-            TerminalType.SSH
-        } else {
-            TerminalType.LOCAL
-        }
-        
+        val terminalType = resolvePreferredTerminalType()
+        return createNewSession(title = title, terminalType = terminalType)
+    }
+
+    /**
+     * 创建指定类型的新会话。
+     */
+    suspend fun createNewSession(
+        title: String? = null,
+        terminalType: TerminalType
+    ): TerminalSessionData {
+        ensureTerminalProviderType(terminalType)
         val newSession = sessionManager.createNewSession(title, terminalType)
 
         // 异步初始化会话
@@ -189,6 +196,12 @@ class TerminalManager private constructor(
         Log.d(TAG, "Session ${newSession.id} initialized successfully")
         return sessionManager.getSession(newSession.id) ?: newSession
     }
+
+    fun setPreferredTerminalType(terminalType: TerminalType?) {
+        preferredTerminalTypeOverride = terminalType
+    }
+
+    fun getPreferredTerminalType(): TerminalType? = preferredTerminalTypeOverride
 
     /**
      * 切换到会话
@@ -517,15 +530,25 @@ class TerminalManager private constructor(
      * 获取或创建单例的终端提供者
      */
     private suspend fun getTerminalProvider(): TerminalProvider {
+        return getTerminalProvider(resolvePreferredTerminalType())
+    }
+
+    private suspend fun getTerminalProvider(terminalType: TerminalType): TerminalProvider {
         providerMutex.withLock {
+            ensureTerminalProviderTypeLocked(terminalType)
             if (terminalProvider == null) {
-                val sshConfig = sshConfigManager.getConfig()
-                val provider = if (sshConfig != null && sshConfigManager.isEnabled()) {
-                    Log.d(TAG, "Creating singleton SSH terminal provider")
-                    SSHTerminalProvider(context, sshConfig, this)
-                } else {
-                    Log.d(TAG, "Creating singleton local terminal provider")
-                    LocalTerminalProvider(context)
+                val provider = when (terminalType) {
+                    TerminalType.SSH -> {
+                        val sshConfig = sshConfigManager.getConfig()
+                            ?: throw IllegalStateException("SSH config is not available")
+                        Log.d(TAG, "Creating singleton SSH terminal provider")
+                        SSHTerminalProvider(context, sshConfig, this)
+                    }
+
+                    else -> {
+                        Log.d(TAG, "Creating singleton local terminal provider")
+                        LocalTerminalProvider(context)
+                    }
                 }
                 provider.connect().getOrThrow()
                 terminalProvider = provider
@@ -1342,4 +1365,35 @@ $prootBindSetup
      * 用于管理本地SSHD服务器（反向SSH隧道场景）
      */
     fun getSSHDServerManager(): SSHDServerManager = sshdServerManager
+
+    private suspend fun resolvePreferredTerminalType(): TerminalType {
+        preferredTerminalTypeOverride?.let { return it }
+        return if (sshConfigManager.getConfig() != null && sshConfigManager.isEnabled()) {
+            TerminalType.SSH
+        } else {
+            TerminalType.LOCAL
+        }
+    }
+
+    private suspend fun ensureTerminalProviderType(terminalType: TerminalType) {
+        providerMutex.withLock {
+            ensureTerminalProviderTypeLocked(terminalType)
+        }
+    }
+
+    private suspend fun ensureTerminalProviderTypeLocked(terminalType: TerminalType) {
+        val existingProvider = terminalProvider ?: return
+        val providerMatches = when (terminalType) {
+            TerminalType.SSH -> existingProvider is SSHTerminalProvider
+            else -> existingProvider is LocalTerminalProvider
+        }
+        if (providerMatches) {
+            return
+        }
+        if (activeSessions.isNotEmpty()) {
+            throw IllegalStateException("Cannot switch terminal provider while sessions are active")
+        }
+        existingProvider.disconnect()
+        terminalProvider = null
+    }
 }
