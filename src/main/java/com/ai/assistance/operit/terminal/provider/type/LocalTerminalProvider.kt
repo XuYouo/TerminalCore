@@ -60,6 +60,7 @@ class LocalTerminalProvider(
         private const val END_MARKER_PREFIX = "__OPERIT_HIDDEN_END__:"
         private const val HIDDEN_EXEC_READY_TIMEOUT_MS = 180000L
         private const val HIDDEN_EXEC_START_MAX_ATTEMPTS = 3
+        private const val HIDDEN_EXEC_TIMEOUT_OUTPUT_MAX_CHARS = 4000
     }
 
     override suspend fun isConnected(): Boolean {
@@ -141,7 +142,12 @@ class LocalTerminalProvider(
                     shell.writer.write(wrappedCommand)
                     shell.writer.flush()
                 }
-                collectHiddenExecResult(shell, token, timeoutMs, onOutputChunk)
+                val hiddenExecResult =
+                    collectHiddenExecResult(shell, token, timeoutMs, onOutputChunk)
+                if (hiddenExecResult.state == HiddenExecResult.State.TIMEOUT) {
+                    closeHiddenExecShell(executorKey)
+                }
+                hiddenExecResult
             } catch (e: TimeoutCancellationException) {
                 closeHiddenExecShell(executorKey)
                 HiddenExecResult(
@@ -322,27 +328,48 @@ class LocalTerminalProvider(
         onOutputChunk: suspend (String) -> Unit
     ): HiddenExecResult {
         val endMarkerPrefix = "$END_MARKER_PREFIX$token:"
-        val rawOutput: String =
-            withTimeout(timeoutMs) {
-                val builder = StringBuilder()
-                var emittedVisibleLength = 0
-                while (true) {
-                    val chunk =
-                        shell.outputChannel.receiveCatching().getOrNull()
-                            ?: break
-                    builder.append(chunk)
-                    val visibleOutput = extractVisibleOutput(builder.toString(), token)
-                    if (visibleOutput.length > emittedVisibleLength) {
-                        val delta = visibleOutput.substring(emittedVisibleLength)
-                        emittedVisibleLength = visibleOutput.length
-                        emitOutputChunkSafely(onOutputChunk, delta)
-                    }
-                    if (builder.indexOf(endMarkerPrefix) >= 0) {
-                        break
+        val builder = StringBuilder()
+        var emittedVisibleLength = 0
+        val completed =
+            try {
+                withTimeout(timeoutMs) {
+                    while (true) {
+                        val chunk =
+                            shell.outputChannel.receiveCatching().getOrNull()
+                                ?: break
+                        builder.append(chunk)
+                        val visibleOutput = extractVisibleOutput(builder.toString(), token)
+                        if (visibleOutput.length > emittedVisibleLength) {
+                            val delta = visibleOutput.substring(emittedVisibleLength)
+                            emittedVisibleLength = visibleOutput.length
+                            emitOutputChunkSafely(onOutputChunk, delta)
+                        }
+                        if (builder.indexOf(endMarkerPrefix) >= 0) {
+                            break
+                        }
                     }
                 }
-                builder.toString()
+                true
+            } catch (_: TimeoutCancellationException) {
+                false
             }
+        val rawOutput = builder.toString()
+        if (!completed) {
+            val visibleOutput = extractVisibleOutput(rawOutput, token)
+            val trimmedVisibleOutput =
+                if (visibleOutput.length > HIDDEN_EXEC_TIMEOUT_OUTPUT_MAX_CHARS) {
+                    visibleOutput.takeLast(HIDDEN_EXEC_TIMEOUT_OUTPUT_MAX_CHARS)
+                } else {
+                    visibleOutput
+                }
+            return HiddenExecResult(
+                output = trimmedVisibleOutput,
+                exitCode = -1,
+                state = HiddenExecResult.State.TIMEOUT,
+                error = "Hidden exec command timed out after ${timeoutMs}ms",
+                rawOutputPreview = rawOutput.takeLast(1200)
+            )
+        }
         if (rawOutput.indexOf(endMarkerPrefix) < 0 && !shell.process.isAlive) {
             return HiddenExecResult(
                 output = "",
