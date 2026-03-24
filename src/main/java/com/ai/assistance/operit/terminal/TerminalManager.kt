@@ -874,6 +874,7 @@ class TerminalManager private constructor(
         val ubuntuPath = "$prootDistroPath/installed-rootfs/ubuntu"
         val operitPackage = context.packageName
         val operitDataDir = context.applicationInfo.dataDir
+        val workspaceHostDir = "$operitDataDir/workspace"
         val operitUserDataMountPath = "/data/user/0/$operitPackage"
         val operitLegacyDataMountPath = "/data/data/$operitPackage"
 
@@ -1100,6 +1101,7 @@ EOF
         val sharedTmpEnabled = prefs.getBoolean("shared_tmp_enabled", true)
         val prootBindSetup = PRootMountMapping.buildRuntimeBindMounts(
             homeDir = homeDir,
+            workspaceDir = workspaceHostDir,
             appDataDir = operitDataDir,
             packageName = operitPackage,
             chrootEnabled = false
@@ -1138,6 +1140,7 @@ EOF
           mkdir -p "${'$'}UBUNTU_PATH$operitLegacyDataMountPath" 2>/dev/null
           mkdir -p "${'$'}UBUNTU_PATH/data/local/tmp" 2>/dev/null
           mkdir -p "${'$'}UBUNTU_PATH$homeDir" 2>/dev/null
+          mkdir -p "$workspaceHostDir" 2>/dev/null
 
           if [ "${'$'}USE_CHROOT" = "1" ]; then
             CMD_FILE="${'$'}TMPDIR/command_to_exec"

@@ -63,6 +63,7 @@ class LocalFileSystemProvider(
     private fun mapPath(linuxPath: String): String {
         val root = ubuntuRoot ?: return linuxPath
         val homeDir = appFilesDir ?: return linuxPath
+        val workspaceDir = appDataDir?.let { "$it/workspace" } ?: return linuxPath
         val dataDir = appDataDir ?: return linuxPath
         val packageName = appPackageName ?: return linuxPath
         val expandedPath = expandHomePath(linuxPath)
@@ -71,6 +72,7 @@ class LocalFileSystemProvider(
             linuxPath = expandedPath,
             ubuntuRoot = root,
             homeDir = homeDir,
+            workspaceDir = workspaceDir,
             appDataDir = dataDir,
             packageName = packageName,
             chrootEnabled = chrootEnabled

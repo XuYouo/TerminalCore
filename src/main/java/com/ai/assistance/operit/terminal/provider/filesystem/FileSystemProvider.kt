@@ -27,7 +27,6 @@ object PRootMountMapping {
         PRootBindMount("/proc/self/fd/2", "/dev/stderr"),
         PRootBindMount("/storage/emulated/0", "/sdcard"),
         PRootBindMount("/storage/emulated/0", "/storage/emulated/0"),
-        PRootBindMount("/storage/emulated/0/workspace", "/workspace"),
         PRootBindMount("/data/local/tmp", "/data/local/tmp")
     )
 
@@ -54,12 +53,14 @@ object PRootMountMapping {
 
     fun buildRuntimeBindMounts(
         homeDir: String,
+        workspaceDir: String,
         appDataDir: String,
         packageName: String,
         chrootEnabled: Boolean
     ): List<PRootBindMount> {
         // 动态挂载：-b $homeDir:$homeDir（通常为 /data/user/0/<package>/files）
         return BASE_BIND_MOUNTS +
+            PRootBindMount(workspaceDir, "/workspace") +
             buildDataBindMounts(appDataDir, packageName, chrootEnabled) +
             PRootBindMount(homeDir, homeDir)
     }
@@ -72,6 +73,7 @@ object PRootMountMapping {
         linuxPath: String,
         ubuntuRoot: File,
         homeDir: String,
+        workspaceDir: String,
         appDataDir: String,
         packageName: String,
         chrootEnabled: Boolean
@@ -81,6 +83,7 @@ object PRootMountMapping {
         resolveSoftMountedSourcePath(
             normalizedPath,
             homeDir,
+            workspaceDir,
             appDataDir,
             packageName,
             chrootEnabled
@@ -98,6 +101,7 @@ object PRootMountMapping {
     fun resolveSoftMountedSourcePath(
         linuxPath: String,
         homeDir: String,
+        workspaceDir: String,
         appDataDir: String,
         packageName: String,
         chrootEnabled: Boolean
@@ -106,6 +110,7 @@ object PRootMountMapping {
 
         val sortedByTargetLengthDesc = buildRuntimeBindMounts(
             homeDir,
+            workspaceDir,
             appDataDir,
             packageName,
             chrootEnabled
