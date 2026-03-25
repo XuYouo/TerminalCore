@@ -670,14 +670,9 @@ class CanvasTerminalView @JvmOverloads constructor(
                     sessionId?.let { id ->
                         onScrollOffsetChanged?.invoke(id, scrollOffsetY)
                     }
-                    
-                    // 用户手动滚动，检测是否在底部
-                    if (scrollOffsetY > 0f) {
-                        isUserScrolling = true
-                    } else {
-                        // 滚动到底部，恢复自动滚动
-                        isUserScrolling = false
-                    }
+                    val atBottom = isAtBottom(scrollOffsetY)
+                    isUserScrolling = !atBottom
+                    autoScrollToBottom = atBottom
                     
                     requestRender()
                 }
@@ -812,12 +807,21 @@ class CanvasTerminalView @JvmOverloads constructor(
         }
         return offset.coerceIn(0f, getMaxScrollOffset())
     }
+
+    private fun isAtBottom(offset: Float = scrollOffsetY, tolerancePx: Float = textMetrics.charHeight): Boolean {
+        val maxScrollOffset = getMaxScrollOffset()
+        val tolerance = max(1f, tolerancePx)
+        return maxScrollOffset <= tolerance || offset >= maxScrollOffset - tolerance
+    }
     
     /**
      * 设置滚动偏移（用于恢复会话滚动位置）
      */
     fun setScrollOffset(offset: Float) {
         scrollOffsetY = clampScrollOffset(offset)
+        val atBottom = isAtBottom(scrollOffsetY)
+        isUserScrolling = !atBottom
+        autoScrollToBottom = atBottom
         requestRender()
     }
     
@@ -831,6 +835,7 @@ class CanvasTerminalView @JvmOverloads constructor(
      */
     fun scrollToBottom() {
         needScrollToBottom = true
+        autoScrollToBottom = true
         isUserScrolling = false // 恢复自动滚动
         isDirty = true
         requestRender()
@@ -1040,14 +1045,9 @@ class CanvasTerminalView @JvmOverloads constructor(
                     sessionId?.let { id ->
                         onScrollOffsetChanged?.invoke(id, scrollOffsetY)
                     }
-                    
-                    // 用户手动滚动，检测是否在底部
-                    if (scrollOffsetY > 0f) {
-                        isUserScrolling = true
-                    } else {
-                        // 滚动到底部，恢复自动滚动
-                        isUserScrolling = false
-                    }
+                    val atBottom = isAtBottom(scrollOffsetY)
+                    isUserScrolling = !atBottom
+                    autoScrollToBottom = atBottom
                     
                     requestRender()
                 }
@@ -1797,8 +1797,9 @@ class CanvasTerminalView @JvmOverloads constructor(
                             onScrollOffsetChanged?.invoke(id, scrollOffsetY)
                         }
 
-                        // 更新用户滚动状态
-                        isUserScrolling = scrollOffsetY > 0f
+                        val atBottom = isAtBottom(scrollOffsetY)
+                        isUserScrolling = !atBottom
+                        autoScrollToBottom = atBottom
 
                         // 继续请求渲染以保持动画流畅
                         isDirty = true
@@ -2677,6 +2678,13 @@ class CanvasTerminalView @JvmOverloads constructor(
         // 这样在缩放后可以恢复到相同的逻辑位置
         val oldCharHeight = textMetrics.charHeight
         val currentScrollRows = if (oldCharHeight > 0) scrollOffsetY / oldCharHeight else 0f
+        val oldRows = cachedRows.coerceAtLeast(1)
+        val oldViewportHeight = oldRows * oldCharHeight
+        val oldFullContentSize = emulator?.getFullContent()?.size ?: 0
+        val oldMaxScrollOffset = max(0f, oldFullContentSize * oldCharHeight - oldViewportHeight)
+        val oldTolerance = max(1f, oldCharHeight)
+        val wasAtBottomBeforeResize =
+            oldMaxScrollOffset <= oldTolerance || scrollOffsetY >= oldMaxScrollOffset - oldTolerance
         
         // 确保字体指标已更新（基于当前缩放因子）
         textMetrics.updateFromRenderConfig(config.copy(fontSize = config.fontSize * scaleFactor))
@@ -2704,9 +2712,17 @@ class CanvasTerminalView @JvmOverloads constructor(
             // 重新计算最大滚动范围
             val fullContentSize = emulator?.getFullContent()?.size ?: 0
             val maxScrollOffset = max(0f, fullContentSize * newCharHeight - contentHeight)
-            
-            // 恢复之前的行位置
-            scrollOffsetY = (currentScrollRows * newCharHeight).coerceIn(0f, maxScrollOffset)
+            val restoredByRows = (currentScrollRows * newCharHeight).coerceIn(0f, maxScrollOffset)
+            scrollOffsetY = if (wasAtBottomBeforeResize || autoScrollToBottom || !isUserScrolling) {
+                maxScrollOffset
+            } else {
+                restoredByRows
+            }
+            val newTolerance = max(1f, newCharHeight)
+            val atBottomNow =
+                maxScrollOffset <= newTolerance || scrollOffsetY >= maxScrollOffset - newTolerance
+            isUserScrolling = !atBottomNow
+            autoScrollToBottom = atBottomNow
         }
         
         // 同步 PTY 窗口尺寸

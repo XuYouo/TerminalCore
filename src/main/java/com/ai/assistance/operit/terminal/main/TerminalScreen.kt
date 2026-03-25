@@ -70,7 +70,7 @@ fun TerminalScreen(
     val updateChecker = remember { UpdateChecker(context) }
 
     DisposableEffect(hostActivity, manifestSoftInputMode) {
-        hostActivity?.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+        hostActivity?.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         onDispose {
             val window = hostActivity?.window
             if (window != null && manifestSoftInputMode != null) {
@@ -108,6 +108,11 @@ fun TerminalScreen(
                 },
                 onNavigateToSettings = {
                     navController.navigate(TerminalRoutes.SETTINGS_ROUTE)
+                },
+                onOpenWorkspace = {
+                    coroutineScope.launch {
+                        manager.sendCommand("cd /root/.openclaw/workspace")
+                    }
                 }
             )
         }
