@@ -21,7 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ai.assistance.operit.terminal.TerminalManager
-import com.ai.assistance.operit.terminal.data.PackageManagerType
+import com.ai.assistance.operit.terminal.setup.EnvironmentSetupLogic
 import com.ai.assistance.operit.terminal.utils.SourceManager
 import com.ai.assistance.operit.terminal.utils.SSHConfigManager
 import kotlinx.coroutines.CompletableDeferred
@@ -82,7 +82,7 @@ fun SetupScreen(
                     name = context.getString(com.ai.assistance.operit.terminal.R.string.category_nodejs_name),
                     description = context.getString(com.ai.assistance.operit.terminal.R.string.category_nodejs_desc),
                     packages = listOf(
-                        PackageItem("nodejs", context.getString(com.ai.assistance.operit.terminal.R.string.package_nodejs_name), "curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt install -y nodejs", context.getString(com.ai.assistance.operit.terminal.R.string.package_nodejs_desc)),
+                        PackageItem("nodejs", context.getString(com.ai.assistance.operit.terminal.R.string.package_nodejs_name), "", context.getString(com.ai.assistance.operit.terminal.R.string.package_nodejs_desc)),
                         PackageItem("pnpm", context.getString(com.ai.assistance.operit.terminal.R.string.package_pnpm_name), "typescript", context.getString(com.ai.assistance.operit.terminal.R.string.package_pnpm_desc))
                     )
                 ),
@@ -351,110 +351,18 @@ fun SetupScreen(
             
             Button(
                 onClick = {
-                    val commands = mutableListOf<String>()
-                    val shouldReinstallNodejs =
-                        selectedPackages.getOrDefault("nodejs", false) &&
-                            packageStatus["nodejs"] != InstallStatus.INSTALLED
-                    
-                    // 系统修复（串行）
-                    commands.add("dpkg --configure -a")
-                    commands.add("apt install -f -y")
-                    if (shouldReinstallNodejs) {
-                        commands.add(buildNodejsReinstallCleanupCommand())
-                    }
-
-                    // 更新软件源
-                    commands.add("apt update -y")
-
-                    // 系统升级
-                    commands.add("apt upgrade -y")
-                    
-                    // 为 pip/pipx 设置国内镜像（永久配置）
-                    commands.add("mkdir -p ~/.config/pip")
-                    commands.add("echo '[global]' > ~/.config/pip/pip.conf")
-                    commands.add("echo 'index-url = https://pypi.tuna.tsinghua.edu.cn/simple' >> ~/.config/pip/pip.conf")
-                    
-                    // 为 uv/uvx 设置国内镜像（永久配置）
-                    commands.add("mkdir -p ~/.config/uv")
-                    commands.add("echo 'index-url = \"https://pypi.tuna.tsinghua.edu.cn/simple\"' > ~/.config/uv/uv.toml")
-                    
-                    // 收集选中的包
-                    val selectedAptPackages = mutableListOf<String>()
-                    val selectedNpmPackages = mutableListOf<String>()
-                    val selectedCustomCommands = mutableListOf<String>()
-                    
-                    packageCategories.forEach { category ->
-                        category.packages.forEach { pkg ->
-                            if (selectedPackages[pkg.id] == true && packageStatus[pkg.id] != InstallStatus.INSTALLED) {
-                                // 根据分类和包ID判断包管理器
-                                if (pkg.id == "rust") {
-                                    // 获取当前选择的Rust镜像源
-                                    val rustSource = sourceManager.getSelectedSource(PackageManagerType.RUST)
-                                    val rustEnvCommand = sourceManager.getRustSourceEnvCommand(rustSource)
-                                    // 添加环境变量设置和安装命令
-                                    selectedCustomCommands.add("$rustEnvCommand && curl -v --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y")
-                                } else if (pkg.id == "uv" || pkg.id == "nodejs") {
-                                    selectedCustomCommands.add(pkg.command)
-                                } else if (category.id == "nodejs" && pkg.id != "nodejs") {
-                                    selectedNpmPackages.add(pkg.command)
-                                } else {
-                                    selectedAptPackages.add(pkg.command)
-                                }
-                            }
+                    val selectedPackageIds = packageCategories
+                        .flatMap { category -> category.packages }
+                        .filter { pkg ->
+                            selectedPackages[pkg.id] == true &&
+                                packageStatus[pkg.id] != InstallStatus.INSTALLED
                         }
-                    }
+                        .map { it.id }
 
-                    // 添加 pipx 作为 uv 的依赖
-                    if (selectedPackages.getOrDefault("uv", false) && packageStatus["uv"] != InstallStatus.INSTALLED) {
-                        selectedAptPackages.add("pipx")
-                    }
-
-                    // 首先安装所有依赖包
-                    val allAptDeps = mutableSetOf<String>()
-                    
-                    // 添加自定义命令的依赖
-                    if (selectedCustomCommands.isNotEmpty()) {
-                        if (selectedPackages.getOrDefault("rust", false)) {
-                            allAptDeps.add("curl")
-                            allAptDeps.add("build-essential")
-                        }
-                        if (selectedPackages.getOrDefault("nodejs", false)) {
-                            allAptDeps.add("curl")
-                        }
-                    }
-                    
-                    // 添加选中的 apt 包
-                    allAptDeps.addAll(selectedAptPackages)
-                    
-                    // 使用 apt 安装所有 apt 包和依赖
-                    if (allAptDeps.isNotEmpty()) {
-                        commands.add("apt install -y ${allAptDeps.joinToString(" ")}")
-                    }
-                    
-                    // 然后运行自定义命令（如安装 rust, uv, nodejs 等）
-                    if (selectedCustomCommands.isNotEmpty()) {
-                        commands.addAll(selectedCustomCommands)
-
-                        // 如果安装了 uv，则需要确保 pipx 路径可用
-                        if (selectedPackages.getOrDefault("uv", false)) {
-                            commands.add("pipx ensurepath")
-                            commands.add("source ~/.profile")
-                        }
-                    }
-                    
-                    // 安装 NPM 包（如果 nodejs 已经安装或被选中）
-                    if (selectedNpmPackages.isNotEmpty()) {
-                        // 更换为淘宝源
-                        commands.add("npm config set registry https://registry.npmmirror.com/")
-                        // 清理 npm 缓存
-                        commands.add("npm cache clean --force")
-                        // 安装pnpm
-                        commands.add("npm install -g pnpm")
-                        // 使用 pnpm 安装其他包
-                        commands.add("pnpm add -g ${selectedNpmPackages.joinToString(" ")}")
-                    }
-                    
-                    commandsToRun.value = commands
+                    commandsToRun.value = EnvironmentSetupLogic.buildInstallCommands(
+                        selectedPackageIds = selectedPackageIds,
+                        sourceManager = sourceManager
+                    )
                     showSetupDialog = true
                 },
                 modifier = Modifier.weight(1f),
@@ -648,23 +556,6 @@ private fun PackageItem(
     }
 }
 
-private fun buildNodejsReinstallCleanupCommand(): String = """
-    rm -f /etc/apt/sources.list.d/nodesource.list
-    rm -f /etc/apt/preferences.d/nodesource
-    rm -f /usr/share/keyrings/nodesource.gpg /etc/apt/keyrings/nodesource.gpg
-    for pkg in nodejs npm nodejs-doc libnode-dev; do
-      if dpkg -s "${'$'}pkg" >/dev/null 2>&1; then
-        apt purge -y "${'$'}pkg"
-      fi
-    done
-    rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm
-    rm -f "${'$'}HOME/.local/bin/node" "${'$'}HOME/.local/bin/npm" "${'$'}HOME/.local/bin/npx" "${'$'}HOME/.local/bin/corepack" "${'$'}HOME/.local/bin/pnpm"
-    rm -rf /usr/local/lib/node_modules
-    rm -rf "${'$'}HOME/.npm" "${'$'}HOME/.cache/node-gyp"
-    apt autoremove -y || true
-    hash -r || true
-""".trimIndent()
-
 @RequiresApi(Build.VERSION_CODES.O)
 private suspend fun checkPackageInstalled(
     terminalManager: TerminalManager,
@@ -672,36 +563,12 @@ private suspend fun checkPackageInstalled(
     pkg: PackageItem,
     scope: CoroutineScope
 ): Boolean {
-    val command: String = when (pkg.id) {
-        "rust" -> "command -v rustc"
-        "uv" -> "command -v uv"
-        "nodejs" -> "node -v 2>/dev/null"
-        "pnpm" -> "test -f \"\$(npm prefix -g)/bin/pnpm\" && echo FOUND_PNPM"
-        "go" -> "command -v go"
-        "git" -> "command -v git"
-        "ffmpeg" -> "command -v ffmpeg"
-        "ssh" -> "command -v ssh"
-        "sshpass" -> "command -v sshpass"
-        "openssh-server" -> "command -v sshd"
-        "gradle" -> "command -v gradle"
-        else -> "dpkg -s ${pkg.command.split(" ").first()}"
-    }
+    val command = EnvironmentSetupLogic.buildCheckCommand(pkg.id, pkg.command)
 
     val output = executeCommandAndGetOutput(terminalManager, sessionId, command, scope)
     if (output == null) return false // 超时或错误
 
-    return when (pkg.id) {
-        "nodejs" -> {
-            // 检查 Node.js 版本是否 >= 24
-            if (output.isBlank() || output.contains("not found")) return false
-            val versionMatch = Regex("""v(\d+)\..*""").find(output.trim())
-            val majorVersion = versionMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
-            majorVersion >= 24
-        }
-        "rust", "uv", "go", "git", "ffmpeg", "ssh", "sshpass", "openssh-server", "gradle" -> output.isNotBlank() && !output.contains("not found")
-        "pnpm" -> output.contains("FOUND_PNPM")
-        else -> output.contains("Status: install ok installed")
-    }
+    return EnvironmentSetupLogic.isPackageInstalled(pkg.id, output.trim())
 }
 
 @RequiresApi(Build.VERSION_CODES.O)

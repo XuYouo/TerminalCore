@@ -79,7 +79,7 @@ fun TerminalScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(env.forceShowSetup) {
         val sharedPreferences = context.getSharedPreferences("terminal_prefs", Context.MODE_PRIVATE)
         val isFirstLaunch = sharedPreferences.getBoolean("is_first_launch", true)
         startDestination = when {

@@ -35,7 +35,7 @@
     
     <!-- Package Items -->
     <string name="package_nodejs_name">Node.js</string>
-    <string name="package_nodejs_desc">JavaScript 运行时</string>
+    <string name="package_nodejs_desc">Node.js 22.x LTS 稳定运行时</string>
     <string name="package_pnpm_name">PNPM</string>
     <string name="package_pnpm_desc">快速的包管理器和 TypeScript</string>
     <string name="package_python_link_name">Python 链接</string>

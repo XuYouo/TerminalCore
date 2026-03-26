@@ -35,7 +35,7 @@
     
     <!-- Package Items -->
     <string name="package_nodejs_name">Node.js</string>
-    <string name="package_nodejs_desc">JavaScript runtime</string>
+    <string name="package_nodejs_desc">Node.js 22.x LTS stable runtime</string>
     <string name="package_pnpm_name">PNPM</string>
     <string name="package_pnpm_desc">Fast package manager and TypeScript</string>
     <string name="package_python_link_name">Python Link</string>
