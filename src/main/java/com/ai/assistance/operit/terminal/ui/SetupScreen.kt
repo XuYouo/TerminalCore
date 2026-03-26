@@ -131,6 +131,15 @@ fun SetupScreen(
                     packages = listOf(
                         PackageItem("go", context.getString(com.ai.assistance.operit.terminal.R.string.package_go_name), "golang-go", context.getString(com.ai.assistance.operit.terminal.R.string.package_go_desc))
                     )
+                ),
+                PackageCategory(
+                    id = "tools",
+                    name = context.getString(com.ai.assistance.operit.terminal.R.string.category_tools_name),
+                    description = context.getString(com.ai.assistance.operit.terminal.R.string.category_tools_desc),
+                    packages = listOf(
+                        PackageItem("git", context.getString(com.ai.assistance.operit.terminal.R.string.package_git_name), "git", context.getString(com.ai.assistance.operit.terminal.R.string.package_git_desc)),
+                        PackageItem("ffmpeg", context.getString(com.ai.assistance.operit.terminal.R.string.package_ffmpeg_name), "ffmpeg", context.getString(com.ai.assistance.operit.terminal.R.string.package_ffmpeg_desc))
+                    )
                 )
             )
         }
@@ -343,10 +352,16 @@ fun SetupScreen(
             Button(
                 onClick = {
                     val commands = mutableListOf<String>()
+                    val shouldReinstallNodejs =
+                        selectedPackages.getOrDefault("nodejs", false) &&
+                            packageStatus["nodejs"] != InstallStatus.INSTALLED
                     
                     // 系统修复（串行）
                     commands.add("dpkg --configure -a")
                     commands.add("apt install -f -y")
+                    if (shouldReinstallNodejs) {
+                        commands.add(buildNodejsReinstallCleanupCommand())
+                    }
 
                     // 更新软件源
                     commands.add("apt update -y")
@@ -495,13 +510,14 @@ private fun CategoryCard(
                             modifier = Modifier.padding(top = 2.dp)
                         )
                     }
-                    // 描述 - 第三行
-                    Text(
-                        text = category.description,
-                        color = Color.Gray,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
+                    if (isExpanded) {
+                        Text(
+                            text = category.description,
+                            color = Color.Gray,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
                 }
                 
                 // 全选按钮
@@ -632,6 +648,23 @@ private fun PackageItem(
     }
 }
 
+private fun buildNodejsReinstallCleanupCommand(): String = """
+    rm -f /etc/apt/sources.list.d/nodesource.list
+    rm -f /etc/apt/preferences.d/nodesource
+    rm -f /usr/share/keyrings/nodesource.gpg /etc/apt/keyrings/nodesource.gpg
+    for pkg in nodejs npm nodejs-doc libnode-dev; do
+      if dpkg -s "${'$'}pkg" >/dev/null 2>&1; then
+        apt purge -y "${'$'}pkg"
+      fi
+    done
+    rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm
+    rm -f "${'$'}HOME/.local/bin/node" "${'$'}HOME/.local/bin/npm" "${'$'}HOME/.local/bin/npx" "${'$'}HOME/.local/bin/corepack" "${'$'}HOME/.local/bin/pnpm"
+    rm -rf /usr/local/lib/node_modules
+    rm -rf "${'$'}HOME/.npm" "${'$'}HOME/.cache/node-gyp"
+    apt autoremove -y || true
+    hash -r || true
+""".trimIndent()
+
 @RequiresApi(Build.VERSION_CODES.O)
 private suspend fun checkPackageInstalled(
     terminalManager: TerminalManager,
@@ -645,6 +678,8 @@ private suspend fun checkPackageInstalled(
         "nodejs" -> "node -v 2>/dev/null"
         "pnpm" -> "test -f \"\$(npm prefix -g)/bin/pnpm\" && echo FOUND_PNPM"
         "go" -> "command -v go"
+        "git" -> "command -v git"
+        "ffmpeg" -> "command -v ffmpeg"
         "ssh" -> "command -v ssh"
         "sshpass" -> "command -v sshpass"
         "openssh-server" -> "command -v sshd"
@@ -663,7 +698,7 @@ private suspend fun checkPackageInstalled(
             val majorVersion = versionMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
             majorVersion >= 24
         }
-        "rust", "uv", "go", "ssh", "sshpass", "openssh-server", "gradle" -> output.isNotBlank() && !output.contains("not found")
+        "rust", "uv", "go", "git", "ffmpeg", "ssh", "sshpass", "openssh-server", "gradle" -> output.isNotBlank() && !output.contains("not found")
         "pnpm" -> output.contains("FOUND_PNPM")
         else -> output.contains("Status: install ok installed")
     }
